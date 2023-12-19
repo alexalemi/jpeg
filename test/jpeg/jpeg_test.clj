@@ -47,6 +47,12 @@
     "foobar" nil
     "" nil))
 
+(deftest keyword-tests
+  (is (= 3 (match `:foo "foo" {:foo "foo"})))
+  (is (= nil (match `:foo "foo" {:foo "bar"})))
+  (is (= 6 (match `(* :foo :bar) "foobar" {:foo "foo" :bar "bar"})))
+  (is (= nil (match `(* :foo :bar) "fooqux" {:foo "foo" :bar "bar"}))))
+
 (deftest iso-date
   (let [digit `(+ "0" (+ "1" (+ "2" (+ "3" (+ "4" (+ "5" (+ "6" (+ "7" (+ "8" "9")))))))))
         year `(* ~digit (* ~digit (* ~digit ~digit)))
@@ -64,6 +70,16 @@
         day month
         iso-date `(* ~year "-" ~month "-" ~day)]
     (are [x y] (= (match iso-date x) y)
+      "2019-06-10" 10
+      "0012-00-00" 10
+      "201-06-10" nil
+      "201--6-10" nil))
+  (let [iso-peg `{:digit (set "0123456789")
+                  :year (* :digit :digit :digit :digit)
+                  :month (* :digit :digit)
+                  :day (* :digit :digit)
+                  :main (* :year "-" :month "-" :day)}]
+    (are [x y] (= (match iso-peg x) y)
       "2019-06-10" 10
       "0012-00-00" 10
       "201-06-10" nil

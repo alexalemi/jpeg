@@ -8,74 +8,69 @@
   "A simple clojure version of the Janet PEG library."
   (:require [clojure.string :as str]))
 
-(defn peg-type [peg _] (type peg))
+(defn peg-type [peg _text _grammar] (type peg))
 
-(defmulti match peg-type)
+(defmulti match-impl peg-type)
 
-(defmethod match String
-  [peg text]
+(defmethod match-impl String
+  [peg text _grammar]
   (when (str/starts-with? text peg) (count peg)))
 
-(defmethod match :default
-  [peg text]
-  (println "DEFUALT"))
-
-(comment
-  (match `(+ "foo" "bar") "foobar"))
-
-(defn leading-symbol [peg _]
+(defn leading-symbol [peg _text _grammar]
   (when (symbol? (first peg))
     (name (first peg))))
 
 (defmulti match-seq leading-symbol)
 
-(defmethod match clojure.lang.Cons
-  [peg text]
-  (match-seq peg text))
+(defmethod match-impl clojure.lang.Cons
+  [peg text grammar]
+  (match-seq peg text grammar))
 
 (defmethod match-seq "!"
-  [[_ x] text]
-  (when-not (match x text) 0))
+  [[_ x] text grammar]
+  (when-not (match-impl x text grammar) 0))
 
 
 (defmethod match-seq "+"
-  [[_ & xs] text]
-  (some (fn [x] (match x text)) xs))
+  [[_ & xs] text grammar]
+  (some (fn [x] (match-impl x text grammar)) xs))
 
 
 (defmethod match-seq "*"
-  [[_ & xs] text]
+  [[_ & xs] text grammar]
   (first
    (reduce
     (fn [[acc text] x]
-      (if-let [n (match x text)]
+      (if-let [n (match-impl x text grammar)]
         [(+ acc n) (subs text n)]
         (reduced nil)))
     [0 text]
     xs)))
 
-
 (defmethod match-seq
   "set"
-  [[_ chrs] text]
-  (when ((set chrs) (first text))
-    1))
+  [[_ chrs] text _grammar]
+  (when ((set chrs) (first text)) 1))
+
+(defmethod match-impl clojure.lang.Keyword
+  [x text grammar]
+  (match-impl (grammar x) text grammar))
+
+(defmethod match-impl clojure.lang.PersistentHashMap
+  [map text grammar]
+  (let [new-grammar (into grammar map)]
+    (match-impl (new-grammar :main) text new-grammar)))
+
+(defn match
+  "Main entrypoint for the API."
+  ([grammar text] (if (map? grammar)
+                    (match-impl (grammar :main) text grammar)
+                    (match-impl grammar text {})))
+  ([peg text grammar] (match-impl peg text grammar)))
 
 
 (comment
-  (match `(set "abcd") "afoo")
-
-  (first `{:a :b})
-  (type `(:a :b))
-
-  (type `:green)
-
-  (leading-symbol `{:a "abcde"} "foo"))
-
-(comment
-  (test/run-all-tests)
-
-  (remove-all-methods match)
+  (remove-all-methods match-impl)
   (remove-all-methods match-seq)
 
-  (methods match))
+  (methods match-impl))

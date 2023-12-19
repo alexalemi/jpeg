@@ -39,6 +39,35 @@
   [x text grammar captures]
   (match-not x text grammar captures))
 
+(defmethod match-seq "set"
+  [[_ chrs] text _grammar captures]
+  (when ((set chrs) (first text)) [1 captures]))
+
+(defn- char-range [[start end]]
+  (map char (range (int start) (inc (int end)))))
+
+(defmethod match-seq "range"
+  [[_ & rngs] text _grammar captures]
+  (let [chrs (into #{} (mapcat char-range) rngs)]
+    (when (chrs (first text)) [1 captures])))
+
+(defmethod match-impl clojure.lang.Keyword
+  [x text grammar captures]
+  (match-impl (grammar x) text grammar captures))
+
+(defmethod match-impl clojure.lang.PersistentHashMap
+  [map text grammar captures]
+  (let [new-grammar (into grammar map)]
+    (match-impl (new-grammar :main) text new-grammar captures)))
+
+(defmethod match-impl Number
+  [n text _grammar captures]
+  (if (pos? n)
+    (when (>= (count text) n) [n captures])
+    (when (< (count text) (abs n)) [0 captures])))
+
+;; ## Sequential captures
+
 (defn- match-choice [[_ & xs] text grammar captures]
   (some (fn [x] (match-impl x text grammar captures)) xs))
 
@@ -68,32 +97,88 @@
   [x text grammar captures]
   (match-sequence x text grammar captures))
 
-(defmethod match-seq "set"
-  [[_ chrs] text _grammar captures]
-  (when ((set chrs) (first text)) [1 captures]))
+(defmethod match-seq "any"
+  [[_ x] text grammar captures]
+  (butlast
+   (reduce
+    (fn [[acc caps text] x]
+      (if-let [[n cap] (match-impl x text grammar captures)]
+        [(+ acc n) (into caps cap) (subs text n)]
+        (reduced [acc caps text])))
+    [0 captures text]
+    (repeat x))))
 
-(defn- char-range [[start end]]
-  (map char (range (int start) (inc (int end)))))
+(defmethod match-seq "some"
+  [[_ x] text grammar captures]
+  (match-sequence `(* ~x (any ~x)) text grammar captures))
 
-(defmethod match-seq "range"
-  [[_ & rngs] text _grammar captures]
-  (let [chrs (into #{} (mapcat char-range) rngs)]
-    (when (chrs (first text)) [1 captures])))
+(defmethod match-seq "repeat"
+  [[_ n x] text grammar captures]
+  (match-sequence `(* ~@(repeat n x)) text grammar captures))
 
-(defmethod match-impl clojure.lang.Keyword
+(defmethod match-seq "at-least"
+  [[_ n x] text grammar captures]
+  (match-sequence `(* (repeat ~n ~x) (any ~x)) text grammar captures))
+
+(defmethod match-seq "at-most"
+  [[_ n x] text grammar captures]
+  (butlast
+   (reduce
+    (fn [[acc caps text left] x]
+      (if (zero? left)
+        (reduced [acc caps text left])
+        (if-let [[n cap] (match-impl x text grammar captures)]
+          [(+ acc n) (into caps cap) (subs text n) (dec left)]
+          (reduced [acc caps text left]))))
+    [0 captures text n]
+    (repeat x))))
+
+(defmethod match-seq "between"
+  [[_ min max x] text grammar captures]
+  (match-sequence `(* (repeat ~min ~x) (at-most ~(- max min) ~x)) text grammar captures))
+
+(defmethod match-seq "opt"
+  [[_ x] text grammar captures]
+  (match-seq `(between 0 1 ~x) text grammar captures))
+
+(defmethod match-seq "?"
+  [[_ x] text grammar captures]
+  (match-seq `(opt ~x) text grammar captures))
+
+(defmethod match-seq "if"
+  [[_ cond x] text grammar captures]
+  (when (match-impl cond text grammar captures)
+        (match-impl x text grammar captures)))
+
+(defmethod match-seq "if-not"
+  [[_ cond x] text grammar captures]
+  (when (match-impl `(not ~cond) text grammar captures)
+        (match-impl x text grammar captures)))
+
+(defn- match-look
+  [[_ offset patt] text grammar captures]
+  (when (match-impl patt (subs text offset) grammar captures)
+        [0 captures]))
+
+(defmethod match-seq "look"
   [x text grammar captures]
-  (match-impl (grammar x) text grammar captures))
+  (match-look x text grammar captures))
 
-(defmethod match-impl clojure.lang.PersistentHashMap
-  [map text grammar captures]
-  (let [new-grammar (into grammar map)]
-    (match-impl (new-grammar :main) text new-grammar captures)))
+(defmethod match-seq ">"
+  [x text grammar captures]
+  (match-look x text grammar captures))
 
-(defmethod match-impl Number
-  [n text _grammar captures]
-  (if (pos? n)
-    (when (>= (count text) n) [n captures])
-    (when (< (count text) (abs n)) [0 captures])))
+(defmethod match-seq "to"
+  [[_ x] text grammar captures]
+  (match-seq `(* (any (if-not ~x 1)) (> 0 ~x)) text grammar captures))
+
+(defmethod match-seq "thru"
+  [[_ x] text grammar captures]
+  (match-seq `(* (any (if-not ~x 1)) ~x) text grammar captures))
+
+;; TODO backmatch
+
+;; ## Default Grammar
 
 (def default-grammar
   `{:d (range "09")
@@ -117,19 +202,17 @@
     :s* (any :s)
     :h* (any :h)})
 
+(defn- default-captures [text]
+  {:_otext text
+   :_stack []})
+
 (defn raw-match
   "Main entrypoint for the API."
   ([grammar text] (if (map? grammar)
-                    (match-impl (grammar :main) text (into default-grammar grammar) {})
-                    (match-impl grammar text default-grammar {})))
-  ([peg text grammar] (match-impl peg text grammar {})))
+                    (match-impl (grammar :main) text (into default-grammar grammar) (default-captures text))
+                    (match-impl grammar text default-grammar (default-captures text))))
+  ([peg text grammar] (match-impl peg text grammar (default-captures text))))
 
 
 (comment
-  (raw-match `:d "0")
-
-  (if [nil {}]
-    :good
-    :bad)
-
   (remove-all-methods match-impl))

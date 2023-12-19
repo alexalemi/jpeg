@@ -79,12 +79,17 @@
   [x text grammar captures]
   (match-choice x text grammar captures))
 
+(defn merge-caps [cap1 cap2]
+  (assoc
+   (into cap1 cap2)
+   :_stack (into (cap1 :_stack) (cap2 :_stack))))
+
 (defn- match-sequence [[_ & xs] text grammar captures]
   (butlast
    (reduce
     (fn [[acc caps text] x]
       (if-let [[n cap] (match-impl x text grammar captures)]
-        [(+ acc n) (into caps cap) (subs text n)]
+        [(+ acc n) (merge-caps caps cap) (subs text n)]
         (reduced nil)))
     [0 captures text]
     xs)))
@@ -177,6 +182,59 @@
   (match-seq `(* (any (if-not ~x 1)) ~x) text grammar captures))
 
 ;; TODO backmatch
+
+;; ## Captures
+
+(defn- match-capture
+  ([patt text grammar captures]
+   (let [[n caps] (match-impl patt text grammar captures)]
+      [n (-> (merge-caps captures caps)
+             (update :_stack conj (subs text 0 n)))]))
+  ([patt text grammar captures tag]
+   (let [[n caps] (match-impl patt text grammar captures)]
+      [n (-> (merge-caps captures caps)
+             (assoc tag (subs text 0 n)))])))
+
+(defmethod match-seq "capture"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-capture patt text grammar captures tag)
+    (match-capture patt text grammar captures)))
+
+(defmethod match-seq "<-"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-capture patt text grammar captures tag)
+    (match-capture patt text grammar captures)))
+
+(defmethod match-seq "quote"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-capture patt text grammar captures tag)
+    (match-capture patt text grammar captures)))
+
+(defn- match-group
+  ([patt text grammar captures]
+   (let [[n caps] (match-impl patt text grammar captures)]
+      [n (-> (into captures caps)
+             (assoc :_stack (conj (captures :_stack) (caps :_stack))))]))
+  ([patt text grammar captures tag]
+   (let [[n caps] (match-impl patt text grammar captures)]
+      [n (-> (merge-caps captures caps)
+             (assoc tag (caps :_stack)))])))
+
+(defmethod match-seq "group"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-group patt text grammar captures tag)
+    (match-group patt text grammar captures)))
+
+(comment
+  (raw-match `{:num (<- :d)
+               :3num (* :num :num :num)
+               :main (* :3num "-" :3num)} "123-456")
+
+  (type `':d))
 
 ;; ## Default Grammar
 

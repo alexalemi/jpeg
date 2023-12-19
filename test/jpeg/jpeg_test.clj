@@ -247,3 +247,8 @@
       "0012-00-00" 10
       "201-06-10" nil
       "201--6-10" nil)))
+
+;; # Capture Tests
+
+(deftest capture-tests
+  (is (raw-match `(capture :d) "1") ["1"]))

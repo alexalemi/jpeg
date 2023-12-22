@@ -28,6 +28,10 @@
   [peg text grammar captures]
   (match-seq peg text grammar captures))
 
+(defmethod match-impl clojure.lang.PersistentList
+  [peg text grammar captures]
+  (match-seq peg text grammar captures))
+
 (defn- match-not [[_ x] text grammar captures]
   (when-not (match-impl x text grammar captures) [0 captures]))
 
@@ -185,15 +189,24 @@
 
 ;; ## Captures
 
+(defn- add-to-stack [captures x]
+  (update captures :_stack conj x))
+
+(defn- add-to-tag [captures tag x]
+  (assoc captures tag x))
+
+
 (defn- match-capture
   ([patt text grammar captures]
    (let [[n caps] (match-impl patt text grammar captures)]
-      [n (-> (merge-caps captures caps)
-             (update :_stack conj (subs text 0 n)))]))
+      (when n
+        [n (-> (merge-caps captures caps)
+               (add-to-stack (subs text 0 n)))])))
   ([patt text grammar captures tag]
    (let [[n caps] (match-impl patt text grammar captures)]
-      [n (-> (merge-caps captures caps)
-             (assoc tag (subs text 0 n)))])))
+      (when n
+        [n (-> (merge-caps captures caps)
+               (add-to-tag tag (subs text 0 n)))]))))
 
 (defmethod match-seq "capture"
   [[_ patt tag] text grammar captures]
@@ -216,12 +229,14 @@
 (defn- match-group
   ([patt text grammar captures]
    (let [[n caps] (match-impl patt text grammar captures)]
+     (when n
       [n (-> (into captures caps)
-             (assoc :_stack (conj (captures :_stack) (caps :_stack))))]))
+             (add-to-stack (caps :_stack)))])))
   ([patt text grammar captures tag]
    (let [[n caps] (match-impl patt text grammar captures)]
+     (when n
       [n (-> (merge-caps captures caps)
-             (assoc tag (caps :_stack)))])))
+             (add-to-tag tag (caps :_stack)))]))))
 
 (defmethod match-seq "group"
   [[_ patt tag] text grammar captures]
@@ -229,12 +244,133 @@
     (match-group patt text grammar captures tag)
     (match-group patt text grammar captures)))
 
+(defn- match-replace
+  ([patt subst text grammar captures]
+   (let [[n caps] (match-capture patt text grammar captures)]
+     (when n
+       (if (fn? subst)
+          [n (-> captures
+                 (add-to-stack (apply subst (caps :_stack))))]
+          [n (-> captures
+                 (add-to-stack subst))]))))
+  ([patt subst text grammar captures tag]
+   (let [[n caps] (match-capture patt text grammar captures)]
+     (when n
+       (if (fn? subst)
+         [n (-> captures
+                (add-to-tag tag (apply subst (caps :_stack))))]
+         [n (-> captures
+                (add-to-tag tag subst))])))))
+
+(defmethod match-seq "replace"
+  [[_ patt subst tag] text grammar captures]
+  (if tag
+    (match-replace patt subst text grammar captures tag)
+    (match-replace patt subst text grammar captures)))
+
+(defmethod match-seq "/"
+  [[_ patt subst tag] text grammar captures]
+  (if tag
+    (match-replace patt subst text grammar captures tag)
+    (match-replace patt subst text grammar captures)))
+
+(defmethod match-seq "constant"
+  [[_ k tag] _text _grammar captures]
+  (if tag
+    [0 (add-to-tag captures tag k)]
+    [0 (add-to-stack captures k)]))
+
+;; TODO (argument n ? tag)
+
+
+(defn- position [text otext]
+  (- (count otext) (count text)))
+
+(defn- consume-lines [s]
+  (loop [s s
+         line '()
+         lines 0]
+    (if-let [x (first s)]
+     (if (= x \newline)
+       (recur (rest s) '() (inc lines))
+       (recur (rest s) (conj line x) lines))
+     [lines (count line)])))
+
+(defn- line-and-col [text otext]
+  (let [pos (position text otext)
+        head (subs otext 0 pos)]
+    (consume-lines head)))
+
+(defn- match-position [[_ tag] text _grammar captures]
+  (let [pos (position text (captures :_otext))]
+    (if tag
+      [0 (add-to-tag captures tag pos)]
+      [0 (add-to-stack captures pos)])))
+
+(defmethod match-seq "position"
+  [x text grammar captures]
+  (match-position x text grammar captures))
+
+(defmethod match-seq "$"
+  [x text grammar captures]
+  (match-position x text grammar captures))
+
+(defmethod match-seq "column"
+  [[_ tag] text _grammar captures]
+  (let [[_line col] (line-and-col text (captures :_otext))]
+    (if tag
+      [0 (add-to-tag captures tag col)]
+      [0 (add-to-stack captures col)])))
+
+(defmethod match-seq "line"
+  [[_ tag] text _grammar captures]
+  (let [[line _col] (line-and-col text (captures :_otext))]
+    (if tag
+      [0 (add-to-tag captures tag line)]
+      [0 (add-to-stack captures line)])))
+
 (comment
   (raw-match `{:num (<- :d)
                :3num (* :num :num :num)
-               :main (* :3num "-" :3num)} "123-456")
+               :main (* :3num "-" :3num)} "123-456"))
 
-  (type `':d))
+
+;; ## Convenience
+
+(defmethod match-seq "long"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-impl `(replace ~patt ~parse-long ~tag) text grammar captures)
+    (match-impl `(replace ~patt ~parse-long) text grammar captures)))
+
+(defmethod match-seq "boolean"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-impl `(replace ~patt ~parse-boolean ~tag) text grammar captures)
+    (match-impl `(replace ~patt ~parse-boolean) text grammar captures)))
+
+(defmethod match-seq "double"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-impl `(replace ~patt ~parse-double ~tag) text grammar captures)
+    (match-impl `(replace ~patt ~parse-double) text grammar captures)))
+
+(defmethod match-seq "uuid"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-impl `(replace ~patt ~parse-uuid) text grammar captures)
+    (match-impl `(replace ~patt ~parse-uuid) text grammar captures)))
+
+(defmethod match-seq "keyword"
+  [[_ patt tag] text grammar captures]
+  (if tag
+    (match-impl `(replace ~patt ~keyword) text grammar captures)
+    (match-impl `(replace ~patt ~keyword) text grammar captures)))
+
+(comment
+  (raw-match `(keyword "true") "true")
+
+  (parse-boolean "false"))
 
 ;; ## Default Grammar
 

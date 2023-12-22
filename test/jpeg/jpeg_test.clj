@@ -251,4 +251,143 @@
 ;; # Capture Tests
 
 (deftest capture-tests
-  (is (raw-match `(capture :d) "1") ["1"]))
+  ;; Basic capture tests
+  (are [patt string len stack]
+      (let [[n caps] (raw-match `(capture ~patt) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d "12" 1 ["1"]
+    :d+ "12" 2 ["12"]
+    :d "abc" nil nil
+    `(* :d :d :d) "123abc" 3 ["123"]
+    `(* :d :d :d) "12abc" nil nil)
+
+  ;; only capture some inside of a pattern
+  (are [patt1 patt patt2 string len stack]
+      (let [[n caps] (raw-match `(* ~patt1 (capture ~patt) ~patt2) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :a+ :d :a+ "abc1def" 7 ["1"]
+    :a+ :d :a+ "abc12def" nil nil
+    :d :d :d "1235" 3 ["2"]
+    :d :a+ :d "1abc5" 5 ["abc"]))
+
+
+(deftest <--tests
+  ;; Basic capture tests
+  (are [patt string len stack]
+      (let [[n caps] (raw-match `(<- ~patt) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d "12" 1 ["1"]
+    :d+ "12" 2 ["12"]
+    :d "abc" nil nil
+    `(* :d :d :d) "123abc" 3 ["123"]
+    `(* :d :d :d) "12abc" nil nil)
+
+  ;; only capture some inside of a pattern
+  (are [patt1 patt patt2 string len stack]
+      (let [[n caps] (raw-match `(* ~patt1 (<- ~patt) ~patt2) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :a+ :d :a+ "abc1def" 7 ["1"]
+    :a+ :d :a+ "abc12def" nil nil
+    :d :d :d "1235" 3 ["2"]
+    :d :a+ :d "1abc5" 5 ["abc"]))
+
+
+(deftest replace-tests
+  (are [patt subst string len stack]
+      (let [[n caps] (raw-match `(replace ~patt ~subst) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d parse-long "12" 1 [1]
+    :d :foo "12" 1 [:foo]
+    :d+ parse-long "12" 2 [12]
+    :d :foo "abc" nil nil
+    `(* :d :d :d) parse-long "123abc" 3 [123]
+    `(* :d :d :d) parse-long "12abc" nil nil)
+
+  ;; only capture some inside of a pattern
+  (are [patt1 patt subst patt2 string len stack]
+      (let [[n caps] (raw-match `(* ~patt1 (replace ~patt ~subst) ~patt2) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :a+ :d parse-long :a+ "abc1def" 7 [1]
+    :a+ :d parse-long :a+ "abc12def" nil nil
+    :d :d parse-long :d "1235" 3 [2]
+    :d :a+ :foo :d "1abc5" 5 [:foo]))
+
+
+(deftest shortreplace-tests
+  (are [patt subst string len stack]
+      (let [[n caps] (raw-match `(/ ~patt ~subst) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d parse-long "12" 1 [1]
+    :d :foo "12" 1 [:foo]
+    :d+ parse-long "12" 2 [12]
+    :d :foo "abc" nil nil
+    `(* :d :d :d) parse-long "123abc" 3 [123]
+    `(* :d :d :d) parse-long "12abc" nil nil)
+
+  ;; only capture some inside of a pattern
+  (are [patt1 patt subst patt2 string len stack]
+      (let [[n caps] (raw-match `(* ~patt1 (/ ~patt ~subst) ~patt2) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :a+ :d parse-long :a+ "abc1def" 7 [1]
+    :a+ :d parse-long :a+ "abc12def" nil nil
+    :d :d parse-long :d "1235" 3 [2]
+    :d :a+ :foo :d "1abc5" 5 [:foo]))
+
+(deftest constant-tests
+  ;; Basic capture tests
+  (are [k string len stack]
+      (let [[n caps] (raw-match `(constant ~k) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    1 "12" 0 [1]
+    :foo "12" 0 [:foo]))
+
+(deftest position-tests
+  (are [patt string len stack]
+      (let [[n caps] (raw-match `(* ~patt (position)) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d "12" 1 [1]
+    :d+ "12" 2 [2]
+    `(some (* :d :a :d)) "1a23a45a5foo" 9 [9]))
+
+(deftest $-tests
+  (are [patt string len stack]
+      (let [[n caps] (raw-match `(* ~patt ($)) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d "12" 1 [1]
+    :d+ "12" 2 [2]
+    `(some (* :d :a :d)) "1a23a45a5foo" 9 [9]))
+
+(deftest line-tests
+  (are [patt string len stack]
+      (let [[n caps] (raw-match `(* ~patt (line)) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d "12" 1 [0]
+    `(some (+ :d :s)) "1\n2\n345\n" 8 [3]
+    `(some (+ :d :s)) "1\n2\n3a45\n" 5 [2]
+    :d+ "12" 2 [0]
+    `(some (* :d :a :d)) "1a23a45a5foo" 9 [0]))
+
+
+(deftest column-tests
+  (are [patt string len stack]
+      (let [[n caps] (raw-match `(* ~patt (column)) string)]
+         (is (= n len))
+         (is (or (nil? caps) (= (caps :_stack) stack)) "stack doesn't match!"))
+    :d "12" 1 [1]
+    :d+ "12" 2 [2]
+    `(some (+ :d :s)) "1\n2\n345\n" 8 [0]
+    `(some (+ :d :s)) "1\n2\n3a45\n" 5 [1]
+    `(some (* :d :a :d)) "1a23a45a5foo" 9 [9]))
+

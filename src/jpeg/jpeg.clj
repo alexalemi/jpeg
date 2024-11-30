@@ -407,6 +407,13 @@
                     (match-impl grammar text default-grammar (default-captures text))))
   ([peg text grammar] (match-impl peg text grammar (default-captures text))))
 
+(defn match
+  "Main entrypoint for the API, peforms a match and returns the captures."
+  [grammar text] 
+  (when-let [[bytes meta] (raw-match grammar text)]
+     (:_stack meta)))
+
+
 
 (comment
   (remove-all-methods match-impl))
